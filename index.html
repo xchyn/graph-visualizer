@@ -4,21 +4,65 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Graph Visualizer</title>
+
+<!--
+  Graph Visualizer — Interactive Planar Graph Construction Tool
+  Author: Xinying Chyn
+  Repository: https://github.com/xchyn/graph-visualizer
+
+  An interactive, browser-based tool for constructing and analyzing graphs.
+  Built to support research in graph realization and outerplanarity hierarchies
+  at the CUNY Graduate Center.
+
+  Architecture:
+    - Single-file HTML application (no external dependencies)
+    - SVG-based rendering for resolution-independent graphics
+    - Pointer Events API for unified mouse/touch input
+    - CSS custom properties for light/dark theme support
+    - Quadratic Bézier curves for edge bending
+-->
+
 <style>
+/* ==========================================================================
+   THEME SYSTEM
+   All colors are defined as CSS custom properties. Light theme is the default;
+   dark theme is activated via the prefers-color-scheme media query.
+   This allows the UI to follow the operating system's appearance setting.
+   ========================================================================== */
+
+/* Light theme (default) */
 :root{
-  --bg:#f5f5f5;--bg2:#fff;--bg3:#e8e8e8;
-  --fg:#333;--fg2:#666;--fg3:#999;
-  --border:#ccc;--border2:#ddd;
-  --node-fill:#d0e4f5;--node-stroke:#4a90c4;--node-text:#1a5a8a;
-  --node-hover:#b8d4ea;--node-src:#4a90c4;--node-src-stroke:#7bb8e8;
-  --edge:#aaa;--edge-hover:#4a90c4;
-  --handle:#e8a44a;--handle-off:#bbb;--handle-stroke:#888;
-  --accent:#4a90c4;--accent-text:#1a5a8a;
-  --bar-bg:rgba(245,245,245,0.92);
-  --export-bg:#fff;--export-shadow:rgba(0,0,0,0.15);
-  --input-bg:#f0f0f0;
-  --tooltip-bg:#fff;--tooltip-border:#ccc;--tooltip-text:#555;
+  --bg:#f5f5f5;           /* page background */
+  --bg2:#fff;             /* canvas background */
+  --bg3:#e8e8e8;          /* toolbar background */
+  --fg:#333;              /* primary text */
+  --fg2:#666;             /* secondary text */
+  --fg3:#999;             /* tertiary/muted text */
+  --border:#ccc;          /* primary borders */
+  --border2:#ddd;         /* secondary borders */
+  --node-fill:#d0e4f5;    /* vertex circle fill */
+  --node-stroke:#4a90c4;  /* vertex circle border */
+  --node-text:#1a5a8a;    /* degree number inside vertex */
+  --node-hover:#b8d4ea;   /* vertex fill on hover */
+  --node-src:#4a90c4;     /* vertex fill when selected as edge source */
+  --node-src-stroke:#7bb8e8; /* vertex border when selected as edge source */
+  --edge:#aaa;            /* edge line color */
+  --edge-hover:#4a90c4;   /* edge color on hover */
+  --handle:#e8a44a;       /* bend handle color (active/bent) */
+  --handle-off:#bbb;      /* bend handle color (inactive/straight) */
+  --handle-stroke:#888;   /* bend handle border */
+  --accent:#4a90c4;       /* accent color for UI elements */
+  --accent-text:#1a5a8a;  /* accent text color */
+  --bar-bg:rgba(245,245,245,0.92);  /* info bar background with transparency */
+  --export-bg:#fff;       /* export dialog background */
+  --export-shadow:rgba(0,0,0,0.15); /* export dialog shadow */
+  --input-bg:#f0f0f0;     /* textarea background */
+  --tooltip-bg:#fff;      /* tooltip background */
+  --tooltip-border:#ccc;  /* tooltip border */
+  --tooltip-text:#555;    /* tooltip text */
 }
+
+/* Dark theme override — activated when OS is in dark mode */
 @media(prefers-color-scheme:dark){
 :root{
   --bg:#111;--bg2:#1e1e1e;--bg3:#1a1a1a;
@@ -34,30 +78,100 @@
   --input-bg:#111;
   --tooltip-bg:#222;--tooltip-border:#444;--tooltip-text:#bbb;
 }}
+
+/* ==========================================================================
+   LAYOUT
+   Full-viewport flexbox layout: toolbar (fixed top), canvas (fills remaining
+   space), info bar (overlaid at bottom).
+   ========================================================================== */
+
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden}
-body{font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;background:var(--bg);color:var(--fg);display:flex;flex-direction:column}
-#toolbar{display:flex;gap:6px;padding:8px 12px;background:var(--bg3);border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center;flex-shrink:0}
-#toolbar button{font-family:inherit;font-size:12px;padding:5px 12px;background:transparent;color:var(--fg2);border:1px solid var(--border2);border-radius:6px;cursor:pointer;transition:all .15s}
+body{
+  font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;
+  background:var(--bg);
+  color:var(--fg);
+  display:flex;
+  flex-direction:column;
+}
+
+/* --- Toolbar --- */
+#toolbar{
+  display:flex;gap:6px;padding:8px 12px;
+  background:var(--bg3);border-bottom:1px solid var(--border);
+  flex-wrap:wrap;align-items:center;flex-shrink:0;
+}
+#toolbar button{
+  font-family:inherit;font-size:12px;padding:5px 12px;
+  background:transparent;color:var(--fg2);
+  border:1px solid var(--border2);border-radius:6px;
+  cursor:pointer;transition:all .15s;
+}
 #toolbar button:hover{background:var(--bg);color:var(--fg)}
-#toolbar .active{background:var(--node-fill);color:var(--accent-text);border-color:var(--node-stroke)}
+#toolbar .active{
+  background:var(--node-fill);color:var(--accent-text);
+  border-color:var(--node-stroke);
+}
+
+/* Vertical separator between mode buttons and action buttons */
 .sep{width:1px;height:20px;background:var(--border);margin:0 4px}
+
+/* --- Canvas wrapper (fills all remaining vertical space) --- */
 #canvas-wrap{flex:1;position:relative;overflow:hidden}
 #canvas{width:100%;height:100%;cursor:crosshair;background:var(--bg2)}
-#info-bar{position:absolute;bottom:0;left:0;right:0;background:var(--bar-bg);border-top:1px solid var(--border);padding:6px 12px;font-size:12px;color:var(--fg3);display:flex;gap:16px;flex-wrap:wrap;backdrop-filter:blur(8px)}
+
+/* --- Info bar (overlaid at bottom of canvas) --- */
+#info-bar{
+  position:absolute;bottom:0;left:0;right:0;
+  background:var(--bar-bg);border-top:1px solid var(--border);
+  padding:6px 12px;font-size:12px;color:var(--fg3);
+  display:flex;gap:16px;flex-wrap:wrap;
+  backdrop-filter:blur(8px);
+}
 #info-bar .label{color:var(--fg3)}
 #deg-seq{color:var(--accent-text)}
 #stats{color:var(--fg2)}
 #hint{color:var(--fg3);margin-left:auto}
-#export-box{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--export-bg);border:1px solid var(--border2);border-radius:10px;padding:16px;width:min(600px,90vw);z-index:10;box-shadow:0 20px 60px var(--export-shadow)}
-#export-box textarea{width:100%;height:220px;font-family:inherit;font-size:11px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--fg);resize:vertical}
+
+/* --- Export dialog (centered modal) --- */
+#export-box{
+  display:none;position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-50%);
+  background:var(--export-bg);border:1px solid var(--border2);
+  border-radius:10px;padding:16px;width:min(600px,90vw);z-index:10;
+  box-shadow:0 20px 60px var(--export-shadow);
+}
+#export-box textarea{
+  width:100%;height:220px;font-family:inherit;font-size:11px;padding:8px;
+  border:1px solid var(--border);border-radius:6px;
+  background:var(--input-bg);color:var(--fg);resize:vertical;
+}
 #export-box .ebar{display:flex;gap:8px;margin-top:8px}
-#export-box button{font-family:inherit;font-size:12px;padding:5px 14px;background:transparent;color:var(--fg2);border:1px solid var(--border2);border-radius:6px;cursor:pointer}
+#export-box button{
+  font-family:inherit;font-size:12px;padding:5px 14px;
+  background:transparent;color:var(--fg2);
+  border:1px solid var(--border2);border-radius:6px;cursor:pointer;
+}
 #export-box button:hover{background:var(--bg)}
-.tooltip{position:absolute;background:var(--tooltip-bg);color:var(--tooltip-text);font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid var(--tooltip-border);pointer-events:none;z-index:5;white-space:nowrap}
+
+/* --- Tooltip (shown on vertex hover to display label) --- */
+.tooltip{
+  position:absolute;background:var(--tooltip-bg);color:var(--tooltip-text);
+  font-size:11px;padding:3px 8px;border-radius:4px;
+  border:1px solid var(--tooltip-border);
+  pointer-events:none;z-index:5;white-space:nowrap;
+}
 </style>
 </head>
+
 <body>
+
+<!-- =======================================================================
+     TOOLBAR
+     Mode buttons (vertex, edge, move, bend, delete) control what happens
+     on canvas interaction. Action buttons (export, clear) trigger immediate
+     operations. Keyboard shortcuts 1-5 map to the five modes.
+     ======================================================================= -->
 <div id="toolbar">
   <button id="btn-vertex" class="active" title="Click canvas to place">+ Vertex</button>
   <button id="btn-edge" title="Click two vertices">+ Edge</button>
@@ -69,6 +183,13 @@ body{font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monos
   <button id="btn-export-img">Export image</button>
   <button id="btn-clear">Clear</button>
 </div>
+
+<!-- =======================================================================
+     CANVAS
+     The SVG element fills the remaining viewport. All graph elements
+     (vertices, edges, labels, bend handles) are rendered as SVG children
+     by the render() function.
+     ======================================================================= -->
 <div id="canvas-wrap">
   <svg id="canvas"></svg>
   <div id="info-bar">
@@ -77,6 +198,8 @@ body{font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monos
     <span id="hint">Click canvas to add a vertex</span>
   </div>
 </div>
+
+<!-- Export data dialog (hidden by default) -->
 <div id="export-box">
   <textarea id="export-text" readonly></textarea>
   <div class="ebar">
@@ -86,45 +209,85 @@ body{font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monos
 </div>
 
 <script>
-const svg = document.getElementById('canvas');
-const degSeqEl = document.getElementById('deg-seq');
-const statsEl = document.getElementById('stats');
-const hintEl = document.getElementById('hint');
-const exportBox = document.getElementById('export-box');
-const exportText = document.getElementById('export-text');
+// ==========================================================================
+// DOM REFERENCES
+// Cached references to frequently accessed DOM elements to avoid
+// repeated getElementById calls during rendering and event handling.
+// ==========================================================================
+
+const svg = document.getElementById('canvas');           // main SVG canvas
+const degSeqEl = document.getElementById('deg-seq');     // degree sequence display
+const statsEl = document.getElementById('stats');        // vertex/edge count display
+const hintEl = document.getElementById('hint');          // mode hint text
+const exportBox = document.getElementById('export-box'); // export dialog container
+const exportText = document.getElementById('export-text'); // export textarea
+
+// ==========================================================================
+// UTILITY: READ CSS VARIABLE
+// Reads the computed value of a CSS custom property from the document root.
+// Used at render time so SVG elements pick up the current theme colors,
+// including live changes when the OS switches between light and dark mode.
+// ==========================================================================
 
 function cv(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-let mode = 'vertex';
-let vertices = [];
-let edges = [];
-let nextId = 1;
-let edgeSrc = null;
-let dragV = null;
-let dragOff = {x:0, y:0};
-let dragBend = null;
-let hoveredV = null;
-let hoveredE = null;
-let tooltip = null;
+// ==========================================================================
+// APPLICATION STATE
+// The graph is stored as two arrays: vertices and edges. Each vertex has a
+// unique numeric id, x/y position, and label string. Each edge references
+// two vertex ids (u, v) and optional bend midpoint coordinates (mx, my).
+// ==========================================================================
 
-const R = 10;
+let mode = 'vertex';     // current interaction mode: vertex|edge|move|bend|delete
+let vertices = [];       // array of {id, x, y, label} objects
+let edges = [];          // array of {id, u, v, mx, my} objects
+let nextId = 1;          // auto-incrementing id for vertices and edges
+let edgeSrc = null;      // id of first vertex when constructing an edge (null if none)
+let dragV = null;        // vertex currently being dragged (null if none)
+let dragOff = {x:0,y:0}; // offset from pointer to vertex center during drag
+let dragBend = null;     // edge currently having its bend handle dragged (null if none)
+let hoveredV = null;     // vertex currently under the pointer (for hover highlight)
+let hoveredE = null;     // edge currently under the pointer (for hover highlight)
+let tooltip = null;      // DOM element for the vertex label tooltip (null if hidden)
+
+const R = 10;            // vertex circle radius in pixels
+
+// ==========================================================================
+// VERTEX RELABELING
+// After a vertex deletion, labels are reassigned sequentially (v1, v2, ...)
+// to keep them contiguous with no gaps. Internal ids remain unchanged so
+// that edge references stay valid.
+// ==========================================================================
 
 function relabel() {
   vertices.forEach((v, i) => { v.label = 'v' + (i + 1); });
 }
 
+// ==========================================================================
+// MODE MANAGEMENT
+// Switches the current interaction mode, updates the toolbar button
+// highlighting, sets the appropriate cursor, and displays a hint message.
+// ==========================================================================
+
 function setMode(m) {
-  mode = m; edgeSrc = null;
+  mode = m;
+  edgeSrc = null; // cancel any in-progress edge construction
+
+  // Update toolbar button active states (skip non-mode buttons)
   document.querySelectorAll('#toolbar button').forEach(b => {
     if (b.id.startsWith('btn-') && !['btn-export','btn-export-img','btn-clear'].includes(b.id))
       b.classList.remove('active');
   });
   const el = document.getElementById('btn-' + m);
   if (el) el.classList.add('active');
+
+  // Set cursor based on mode
   const cursors = {vertex:'crosshair', edge:'pointer', move:'grab', bend:'pointer', delete:'pointer'};
   svg.style.cursor = cursors[m] || 'default';
+
+  // Display mode-specific hint in the info bar
   const hints = {
     vertex: 'Click canvas to add a vertex',
     edge: 'Click a vertex to start an edge, then another to finish',
@@ -135,16 +298,25 @@ function setMode(m) {
   hintEl.textContent = hints[m] || '';
 }
 
+// ==========================================================================
+// TOOLBAR BUTTON EVENT HANDLERS
+// ==========================================================================
+
 document.getElementById('btn-vertex').onclick = () => setMode('vertex');
 document.getElementById('btn-edge').onclick = () => setMode('edge');
 document.getElementById('btn-move').onclick = () => setMode('move');
 document.getElementById('btn-bend').onclick = () => setMode('bend');
 document.getElementById('btn-delete').onclick = () => setMode('delete');
+
+// Clear all: reset the graph to empty
 document.getElementById('btn-clear').onclick = () => {
   vertices = []; edges = []; nextId = 1; edgeSrc = null; render();
 };
+
 document.getElementById('btn-export').onclick = doExport;
 document.getElementById('btn-export-img').onclick = doExportImage;
+
+// Copy export text to clipboard with visual feedback
 document.getElementById('btn-copy').onclick = () => {
   exportText.select();
   navigator.clipboard.writeText(exportText.value).then(() => {
@@ -152,19 +324,36 @@ document.getElementById('btn-copy').onclick = () => {
     setTimeout(() => document.getElementById('btn-copy').textContent = 'Copy', 1500);
   });
 };
+
 document.getElementById('btn-close-export').onclick = () => exportBox.style.display = 'none';
 
+// ==========================================================================
+// EXPORT DATA
+// Generates a text representation of the graph including: vertex list,
+// edge list, condensed degree sequence, and full adjacency list.
+// Displayed in a modal textarea for easy copy-paste.
+// ==========================================================================
+
 function doExport() {
+  // Compute degree for each vertex
   const deg = {};
   vertices.forEach(v => deg[v.id] = 0);
   edges.forEach(e => { deg[e.u]++; deg[e.v]++; });
+
+  // Build vertex list string
   const vList = vertices.map(v => v.label).join(', ');
+
+  // Build edge list string (one edge per line)
   const eList = edges.map(e => {
     const a = vertices.find(v => v.id === e.u);
     const b = vertices.find(v => v.id === e.v);
     return a && b ? `(${a.label}, ${b.label})` : '';
   }).filter(Boolean).join('\n');
+
+  // Build sorted degree sequence (descending)
   const seq = vertices.map(v => deg[v.id]).sort((a, b) => b - a);
+
+  // Build adjacency list (one vertex per line with its neighbors)
   const adj = vertices.map(v => {
     const nbrs = [];
     edges.forEach(e => {
@@ -173,18 +362,37 @@ function doExport() {
     });
     return `${v.label}: ${nbrs.join(', ')}`;
   }).join('\n');
+
+  // Assemble and display
   exportText.value = `Vertices (${vertices.length}): ${vList}\n\nEdges (${edges.length}):\n${eList}\n\nDegree sequence: ${condensed(seq)}\n\nAdjacency list:\n${adj}`;
   exportBox.style.display = 'block';
 }
 
+// ==========================================================================
+// EXPORT IMAGE
+// Renders the current graph as a high-resolution PNG image and triggers a
+// browser download. The process:
+//   1. Compute bounding box of all vertices and control points
+//   2. Build a standalone SVG string with hardcoded light-theme colors
+//   3. Include vertex labels, degree numbers, and centered degree sequence
+//   4. Render the SVG to an offscreen canvas at 2x resolution
+//   5. Convert the canvas to a PNG blob and trigger download
+//
+// Light theme colors are always used for exported images to ensure
+// readability in papers and presentations.
+// ==========================================================================
+
 function doExportImage() {
   if (!vertices.length) return;
+
+  // Step 1: compute bounding box with padding
   const pad = 40;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const v of vertices) {
     minX = Math.min(minX, v.x - R); minY = Math.min(minY, v.y - R);
     maxX = Math.max(maxX, v.x + R); maxY = Math.max(maxY, v.y + R);
   }
+  // Include Bézier control points in bounding box so curved edges aren't clipped
   for (const e of edges) {
     if (e.mx != null) {
       const cp = getControlPoint(e);
@@ -199,18 +407,28 @@ function doExportImage() {
   minX -= pad; minY -= pad; maxX += pad; maxY += pad;
   const w = maxX - minX;
   const h = maxY - minY;
+
+  // Step 2: hardcoded light-theme colors for print readability
   const bgColor = '#fff';
   const nodeF = '#d0e4f5';
   const nodeS = '#4a90c4';
   const nodeT = '#1a5a8a';
   const edgeC = '#aaa';
   const fgColor = '#999';
+
+  // Prepare degree sequence string for the header
   const degs = vertices.map(v => getDeg(v.id)).sort((a, b) => b - a);
   const seqStr = 'Degree sequence: ' + condensed(degs) + '    |V|=' + vertices.length + '  |E|=' + edges.length;
-  const labelH = 28;
+  const labelH = 28; // height reserved for the header text above the graph
+
+  // Step 3: build SVG string with background, header, edges, and vertices
   let s = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h + labelH}" viewBox="${minX} ${minY - labelH} ${w} ${h + labelH}">`;
   s += `<rect x="${minX}" y="${minY - labelH}" width="${w}" height="${h + labelH}" fill="${bgColor}"/>`;
+
+  // Centered degree sequence header
   s += `<text x="${minX + w / 2}" y="${minY - 8}" text-anchor="middle" font-family="SF Mono,Consolas,monospace" font-size="13" fill="${fgColor}">${seqStr}</text>`;
+
+  // Draw edges (straight lines or quadratic Bézier curves)
   for (const e of edges) {
     const a = vertices.find(v => v.id === e.u);
     const b = vertices.find(v => v.id === e.v);
@@ -222,6 +440,8 @@ function doExportImage() {
       s += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${edgeC}" stroke-width="2"/>`;
     }
   }
+
+  // Draw vertices with degree inside and label above
   for (const v of vertices) {
     const d = getDeg(v.id);
     s += `<circle cx="${v.x}" cy="${v.y}" r="${R}" fill="${nodeF}" stroke="${nodeS}" stroke-width="1.5"/>`;
@@ -229,17 +449,24 @@ function doExportImage() {
     s += `<text x="${v.x}" y="${v.y - R - 6}" text-anchor="middle" font-family="SF Mono,Consolas,monospace" font-size="10" fill="${fgColor}">${v.label}</text>`;
   }
   s += `</svg>`;
+
+  // Step 4: render SVG to an offscreen canvas at 2x resolution for crisp output
   const scale = 2;
   const canvas = document.createElement('canvas');
   canvas.width = w * scale;
   canvas.height = (h + labelH) * scale;
   const ctx = canvas.getContext('2d');
+
+  // Create an Image from the SVG blob, draw it to canvas, then export as PNG
   const img = new Image();
   const blob = new Blob([s], { type: 'image/svg+xml;charset=utf-8' });
   const url = URL.createObjectURL(blob);
+
   img.onload = () => {
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     URL.revokeObjectURL(url);
+
+    // Step 5: convert canvas to PNG and trigger download
     canvas.toBlob(pngBlob => {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(pngBlob);
@@ -251,19 +478,34 @@ function doExportImage() {
   img.src = url;
 }
 
+// ==========================================================================
+// CONDENSED DEGREE SEQUENCE
+// Converts a sorted degree sequence array like [6,6,6,4,4] into condensed
+// notation string "(6^3, 4^2)" by run-length encoding consecutive equal values.
+// Returns "—" for empty sequences.
+// ==========================================================================
+
 function condensed(seq) {
   if (!seq.length) return '—';
   const parts = [];
   let i = 0;
   while (i < seq.length) {
     let j = i;
+    // Count consecutive equal values
     while (j < seq.length && seq[j] === seq[i]) j++;
     const count = j - i;
+    // Use superscript notation for runs of 2+, plain number for singles
     parts.push(count > 1 ? `${seq[i]}^${count}` : `${seq[i]}`);
     i = j;
   }
   return '(' + parts.join(', ') + ')';
 }
+
+// ==========================================================================
+// COORDINATE CONVERSION
+// Converts a pointer event (mouse or touch) to SVG-local coordinates
+// by subtracting the SVG element's bounding rectangle offset.
+// ==========================================================================
 
 function pt(e) {
   const r = svg.getBoundingClientRect();
@@ -271,10 +513,25 @@ function pt(e) {
   return { x: ct.clientX - r.left, y: ct.clientY - r.top };
 }
 
+// ==========================================================================
+// HIT TESTING
+// Functions to determine what graph element (vertex, edge, or bend handle)
+// is under the pointer at a given position.
+// ==========================================================================
+
+/**
+ * Find the first vertex within click radius of point p.
+ * Uses Euclidean distance with a tolerance of R + 4 pixels.
+ */
 function hitV(p) {
   return vertices.find(v => Math.hypot(v.x - p.x, v.y - p.y) < R + 4);
 }
 
+/**
+ * Get the on-curve midpoint position for an edge's bend handle.
+ * If the edge has been bent (mx/my are set), returns the stored midpoint.
+ * Otherwise returns the geometric midpoint of the two endpoints.
+ */
 function getHandlePos(e) {
   const a = vertices.find(v => v.id === e.u);
   const b = vertices.find(v => v.id === e.v);
@@ -283,6 +540,17 @@ function getHandlePos(e) {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
+/**
+ * Compute the quadratic Bézier control point from the on-curve midpoint.
+ *
+ * For a quadratic Bézier curve P(t) = (1-t)^2 * A + 2(1-t)t * CP + t^2 * B,
+ * the point at t=0.5 is: P(0.5) = (A + 2*CP + B) / 4.
+ * Solving for CP given the desired on-curve midpoint M:
+ *   CP = 2*M - (A + B) / 2
+ *
+ * This ensures the drag handle (which the user sees and drags) sits exactly
+ * on the visible curve at t=0.5, rather than at the off-curve control point.
+ */
 function getControlPoint(e) {
   const a = vertices.find(v => v.id === e.u);
   const b = vertices.find(v => v.id === e.v);
@@ -293,6 +561,9 @@ function getControlPoint(e) {
   };
 }
 
+/**
+ * Find the first edge whose bend handle is within 10px of point p.
+ */
 function hitBendHandle(p) {
   for (const e of edges) {
     const m = getHandlePos(e);
@@ -301,12 +572,20 @@ function hitBendHandle(p) {
   return null;
 }
 
+/**
+ * Compute the minimum distance from point p to an edge.
+ * For curved edges: samples 50 points along the Bézier curve (t in [0,1])
+ * and returns 0 if any sample is within 8px of the point.
+ * For straight edges: uses point-to-line-segment projection.
+ */
 function pointToEdgeDist(p, e) {
   const a = vertices.find(v => v.id === e.u);
   const b = vertices.find(v => v.id === e.v);
   if (!a || !b) return Infinity;
+
   const cp = getControlPoint(e);
   if (cp) {
+    // Sample along the Bézier curve
     for (let t = 0; t <= 1; t += 0.02) {
       const x = (1-t)*(1-t)*a.x + 2*(1-t)*t*cp.x + t*t*b.x;
       const y = (1-t)*(1-t)*a.y + 2*(1-t)*t*cp.y + t*t*b.y;
@@ -314,12 +593,17 @@ function pointToEdgeDist(p, e) {
     }
     return Infinity;
   }
+
+  // Straight edge: project point onto line segment
   const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
   if (len < 1) return Infinity;
   const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (len * len)));
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
+/**
+ * Find the first edge within click tolerance of point p.
+ */
 function hitE(p) {
   for (const e of edges) {
     if (pointToEdgeDist(p, e) < 8) return e;
@@ -327,13 +611,28 @@ function hitE(p) {
   return null;
 }
 
+// ==========================================================================
+// DEGREE COMPUTATION
+// Returns the degree of a vertex (number of edges incident to it).
+// ==========================================================================
+
 function getDeg(vid) {
   let d = 0;
   edges.forEach(e => { if (e.u === vid || e.v === vid) d++; });
   return d;
 }
 
+// ==========================================================================
+// RENDERING
+// Rebuilds the entire SVG content from the current graph state. Called after
+// every state change (vertex/edge add/remove, drag, hover, mode switch).
+//
+// Render order: edges first (so they appear behind vertices), then vertices.
+// In bend mode, small circular handles are drawn at each edge's midpoint.
+// ==========================================================================
+
 function render() {
+  // Read current theme colors from CSS variables
   const nodeFill = cv('--node-fill');
   const nodeStroke = cv('--node-stroke');
   const nodeText = cv('--node-text');
@@ -349,39 +648,59 @@ function render() {
   let html = '';
   const showHandles = (mode === 'bend');
 
+  // --- Draw edges ---
   for (const e of edges) {
     const a = vertices.find(v => v.id === e.u);
     const b = vertices.find(v => v.id === e.v);
     if (!a || !b) continue;
+
     const isHov = (hoveredE === e);
     const col = isHov ? edgeHovCol : edgeCol;
     const cp = getControlPoint(e);
+
     if (cp) {
+      // Curved edge: quadratic Bézier path
       html += `<path d="M${a.x},${a.y} Q${cp.x},${cp.y} ${b.x},${b.y}" fill="none" stroke="${col}" stroke-width="2"/>`;
     } else {
+      // Straight edge: simple line
       html += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${col}" stroke-width="2"/>`;
     }
+
+    // In bend mode, show draggable handle at the edge midpoint
     if (showHandles) {
       const h = getHandlePos(e);
       if (h) {
+        // Orange handle if bent, gray if straight
         html += `<circle cx="${h.x}" cy="${h.y}" r="5" fill="${e.mx != null ? handleCol : handleOff}" stroke="${handleStroke}" stroke-width="1" style="cursor:grab"/>`;
       }
     }
   }
 
+  // --- Draw vertices ---
   for (const v of vertices) {
     const d = getDeg(v.id);
     const isHov = (hoveredV === v);
     const isSrc = (edgeSrc === v.id);
+
+    // Color depends on state: selected as edge source > hovered > default
     const fill = isSrc ? nodeSrc : (isHov ? nodeHover : nodeFill);
     const stroke = isSrc ? nodeSrcStroke : (isHov ? edgeHovCol : nodeStroke);
+
+    // Vertex circle
     html += `<circle cx="${v.x}" cy="${v.y}" r="${R}" fill="${fill}" stroke="${stroke}" stroke-width="${isSrc ? 2.5 : 1.5}"/>`;
+    // Degree number centered inside the circle
     html += `<text x="${v.x}" y="${v.y}" text-anchor="middle" dominant-baseline="central" font-size="10" font-weight="600" fill="${nodeText}" style="pointer-events:none;font-family:inherit">${d}</text>`;
   }
 
   svg.innerHTML = html;
   updateInfo();
 }
+
+// ==========================================================================
+// INFO BAR UPDATE
+// Updates the degree sequence and vertex/edge count displayed in the
+// bottom info bar.
+// ==========================================================================
 
 function updateInfo() {
   if (!vertices.length) {
@@ -393,6 +712,13 @@ function updateInfo() {
   degSeqEl.textContent = condensed(degs);
   statsEl.textContent = `|V|=${vertices.length}  |E|=${edges.length}`;
 }
+
+// ==========================================================================
+// TOOLTIP
+// Shows/hides a floating label (e.g. "v3") near the pointer when hovering
+// over a vertex. The vertex circle displays the degree, so the tooltip
+// provides the vertex name without cluttering the canvas.
+// ==========================================================================
 
 function showTooltip(v, p) {
   removeTooltip();
@@ -408,22 +734,41 @@ function removeTooltip() {
   if (tooltip) { tooltip.remove(); tooltip = null; }
 }
 
+// ==========================================================================
+// THEME CHANGE LISTENER
+// Re-renders the graph when the OS switches between light and dark mode,
+// so SVG elements pick up the new CSS variable values immediately.
+// ==========================================================================
+
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => render());
+
+// ==========================================================================
+// POINTER EVENT HANDLERS
+// All canvas interactions flow through three pointer events: down, move, up.
+// The behavior depends on the current mode.
+// ==========================================================================
 
 svg.addEventListener('pointerdown', e => {
   const p = pt(e);
+
   if (mode === 'vertex') {
+    // --- Add vertex mode: place a new vertex at the click position ---
     const newLabel = 'v' + (vertices.length + 1);
     vertices.push({ id: nextId++, x: p.x, y: p.y, label: newLabel });
     render();
+
   } else if (mode === 'edge') {
+    // --- Add edge mode: two-click process ---
     const h = hitV(p);
     if (!h) return;
+
     if (!edgeSrc) {
+      // First click: select source vertex
       edgeSrc = h.id;
       render();
       hintEl.textContent = `Edge from ${h.label} — click another vertex`;
     } else {
+      // Second click: create edge if valid (no self-loops, no duplicates)
       if (h.id !== edgeSrc && !edges.some(e => (e.u === edgeSrc && e.v === h.id) || (e.v === edgeSrc && e.u === h.id))) {
         edges.push({ id: nextId++, u: edgeSrc, v: h.id, mx: null, my: null });
       }
@@ -431,27 +776,35 @@ svg.addEventListener('pointerdown', e => {
       render();
       hintEl.textContent = 'Click a vertex to start an edge';
     }
+
   } else if (mode === 'move') {
+    // --- Move mode: begin dragging a vertex ---
     const h = hitV(p);
     if (h) {
       dragV = h;
+      // Store offset so the vertex doesn't jump to the cursor position
       dragOff = { x: h.x - p.x, y: h.y - p.y };
       svg.style.cursor = 'grabbing';
-      svg.setPointerCapture(e.pointerId);
+      svg.setPointerCapture(e.pointerId); // capture pointer for smooth dragging
     }
+
   } else if (mode === 'bend') {
+    // --- Bend mode: begin dragging an edge's midpoint handle ---
     const h = hitBendHandle(p);
     if (h) {
       dragBend = h;
       svg.setPointerCapture(e.pointerId);
       svg.style.cursor = 'grabbing';
     }
+
   } else if (mode === 'delete') {
+    // --- Delete mode: remove vertex (and incident edges) or edge ---
     const hv = hitV(p);
     if (hv) {
+      // Remove all edges connected to this vertex, then the vertex itself
       edges = edges.filter(e => e.u !== hv.id && e.v !== hv.id);
       vertices = vertices.filter(v => v.id !== hv.id);
-      relabel();
+      relabel(); // re-assign v1, v2, ... with no gaps
       render();
       return;
     }
@@ -465,32 +818,42 @@ svg.addEventListener('pointerdown', e => {
 
 svg.addEventListener('pointermove', e => {
   const p = pt(e);
+
+  // Handle active vertex drag
   if (dragV) {
     dragV.x = p.x + dragOff.x;
     dragV.y = p.y + dragOff.y;
     render();
     return;
   }
+
+  // Handle active bend handle drag (stores on-curve midpoint directly)
   if (dragBend) {
     dragBend.mx = p.x;
     dragBend.my = p.y;
     render();
     return;
   }
+
+  // Hover detection: update highlights when the hovered element changes
   const oldHV = hoveredV;
   const oldHE = hoveredE;
   hoveredV = hitV(p);
-  hoveredE = (!hoveredV) ? hitE(p) : null;
+  hoveredE = (!hoveredV) ? hitE(p) : null; // only check edges if not on a vertex
   if (hoveredV !== oldHV || hoveredE !== oldHE) render();
+
+  // Show/hide vertex label tooltip
   if (hoveredV) showTooltip(hoveredV, p);
   else removeTooltip();
 });
 
 svg.addEventListener('pointerup', () => {
+  // End any active drag operation
   if (dragV) { dragV = null; svg.style.cursor = 'grab'; }
   if (dragBend) { dragBend = null; svg.style.cursor = 'pointer'; }
 });
 
+// Double-click in bend mode: reset edge to straight (remove bend)
 svg.addEventListener('dblclick', e => {
   if (mode === 'bend') {
     const p = pt(e);
@@ -503,7 +866,14 @@ svg.addEventListener('dblclick', e => {
   }
 });
 
+// ==========================================================================
+// KEYBOARD SHORTCUTS
+// Keys 1-5 switch between the five modes. Escape cancels in-progress
+// edge construction or closes the export dialog.
+// ==========================================================================
+
 document.addEventListener('keydown', e => {
+  // If export dialog is open, only handle Escape to close it
   if (exportBox.style.display === 'block') {
     if (e.key === 'Escape') exportBox.style.display = 'none';
     return;
@@ -515,6 +885,11 @@ document.addEventListener('keydown', e => {
   if (e.key === '5') setMode('delete');
   if (e.key === 'Escape') { edgeSrc = null; render(); }
 });
+
+// ==========================================================================
+// INITIAL RENDER
+// Draw the empty canvas on page load.
+// ==========================================================================
 
 render();
 </script>
