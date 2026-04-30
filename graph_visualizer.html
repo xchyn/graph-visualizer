@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Graph Visualizer</title>
+<style>
+:root{
+  --bg:#f5f5f5;--bg2:#fff;--bg3:#e8e8e8;
+  --fg:#333;--fg2:#666;--fg3:#999;
+  --border:#ccc;--border2:#ddd;
+  --node-fill:#d0e4f5;--node-stroke:#4a90c4;--node-text:#1a5a8a;
+  --node-hover:#b8d4ea;--node-src:#4a90c4;--node-src-stroke:#7bb8e8;
+  --edge:#aaa;--edge-hover:#4a90c4;
+  --handle:#e8a44a;--handle-off:#bbb;--handle-stroke:#888;
+  --accent:#4a90c4;--accent-text:#1a5a8a;
+  --bar-bg:rgba(245,245,245,0.92);
+  --export-bg:#fff;--export-shadow:rgba(0,0,0,0.15);
+  --input-bg:#f0f0f0;
+  --tooltip-bg:#fff;--tooltip-border:#ccc;--tooltip-text:#555;
+}
+@media(prefers-color-scheme:dark){
+:root{
+  --bg:#111;--bg2:#1e1e1e;--bg3:#1a1a1a;
+  --fg:#ccc;--fg2:#aaa;--fg3:#666;
+  --border:#333;--border2:#444;
+  --node-fill:#1a3a5c;--node-stroke:#2a6aaa;--node-text:#7bb8e8;
+  --node-hover:#244a6a;--node-src:#2a6aaa;--node-src-stroke:#7bb8e8;
+  --edge:#555;--edge-hover:#5a9fd4;
+  --handle:#e8a44a;--handle-off:#444;--handle-stroke:#888;
+  --accent:#7bb8e8;--accent-text:#7bb8e8;
+  --bar-bg:rgba(17,17,17,0.92);
+  --export-bg:#1a1a1a;--export-shadow:rgba(0,0,0,0.6);
+  --input-bg:#111;
+  --tooltip-bg:#222;--tooltip-border:#444;--tooltip-text:#bbb;
+}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;background:var(--bg);color:var(--fg);display:flex;flex-direction:column}
+#toolbar{display:flex;gap:6px;padding:8px 12px;background:var(--bg3);border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center;flex-shrink:0}
+#toolbar button{font-family:inherit;font-size:12px;padding:5px 12px;background:transparent;color:var(--fg2);border:1px solid var(--border2);border-radius:6px;cursor:pointer;transition:all .15s}
+#toolbar button:hover{background:var(--bg);color:var(--fg)}
+#toolbar .active{background:var(--node-fill);color:var(--accent-text);border-color:var(--node-stroke)}
+.sep{width:1px;height:20px;background:var(--border);margin:0 4px}
+#canvas-wrap{flex:1;position:relative;overflow:hidden}
+#canvas{width:100%;height:100%;cursor:crosshair;background:var(--bg2)}
+#info-bar{position:absolute;bottom:0;left:0;right:0;background:var(--bar-bg);border-top:1px solid var(--border);padding:6px 12px;font-size:12px;color:var(--fg3);display:flex;gap:16px;flex-wrap:wrap;backdrop-filter:blur(8px)}
+#info-bar .label{color:var(--fg3)}
+#deg-seq{color:var(--accent-text)}
+#stats{color:var(--fg2)}
+#hint{color:var(--fg3);margin-left:auto}
+#export-box{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--export-bg);border:1px solid var(--border2);border-radius:10px;padding:16px;width:min(600px,90vw);z-index:10;box-shadow:0 20px 60px var(--export-shadow)}
+#export-box textarea{width:100%;height:220px;font-family:inherit;font-size:11px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--fg);resize:vertical}
+#export-box .ebar{display:flex;gap:8px;margin-top:8px}
+#export-box button{font-family:inherit;font-size:12px;padding:5px 14px;background:transparent;color:var(--fg2);border:1px solid var(--border2);border-radius:6px;cursor:pointer}
+#export-box button:hover{background:var(--bg)}
+.tooltip{position:absolute;background:var(--tooltip-bg);color:var(--tooltip-text);font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid var(--tooltip-border);pointer-events:none;z-index:5;white-space:nowrap}
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <button id="btn-vertex" class="active" title="Click canvas to place">+ Vertex</button>
+  <button id="btn-edge" title="Click two vertices">+ Edge</button>
+  <button id="btn-move" title="Drag vertices">Move</button>
+  <button id="btn-bend" title="Drag edge midpoints to curve">Bend</button>
+  <button id="btn-delete" title="Click to remove">Delete</button>
+  <div class="sep"></div>
+  <button id="btn-export">Export data</button>
+  <button id="btn-export-img">Export image</button>
+  <button id="btn-clear">Clear</button>
+</div>
+<div id="canvas-wrap">
+  <svg id="canvas"></svg>
+  <div id="info-bar">
+    <span><span class="label">Deg seq: </span><span id="deg-seq">—</span></span>
+    <span id="stats"></span>
+    <span id="hint">Click canvas to add a vertex</span>
+  </div>
+</div>
+<div id="export-box">
+  <textarea id="export-text" readonly></textarea>
+  <div class="ebar">
+    <button id="btn-copy">Copy</button>
+    <button id="btn-close-export">Close</button>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('canvas');
+const degSeqEl = document.getElementById('deg-seq');
+const statsEl = document.getElementById('stats');
+const hintEl = document.getElementById('hint');
+const exportBox = document.getElementById('export-box');
+const exportText = document.getElementById('export-text');
+
+function cv(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+let mode = 'vertex';
+let vertices = [];
+let edges = [];
+let nextId = 1;
+let edgeSrc = null;
+let dragV = null;
+let dragOff = {x:0, y:0};
+let dragBend = null;
+let hoveredV = null;
+let hoveredE = null;
+let tooltip = null;
+
+const R = 10;
+
+function relabel() {
+  vertices.forEach((v, i) => { v.label = 'v' + (i + 1); });
+}
+
+function setMode(m) {
+  mode = m; edgeSrc = null;
+  document.querySelectorAll('#toolbar button').forEach(b => {
+    if (b.id.startsWith('btn-') && !['btn-export','btn-export-img','btn-clear'].includes(b.id))
+      b.classList.remove('active');
+  });
+  const el = document.getElementById('btn-' + m);
+  if (el) el.classList.add('active');
+  const cursors = {vertex:'crosshair', edge:'pointer', move:'grab', bend:'pointer', delete:'pointer'};
+  svg.style.cursor = cursors[m] || 'default';
+  const hints = {
+    vertex: 'Click canvas to add a vertex',
+    edge: 'Click a vertex to start an edge, then another to finish',
+    move: 'Drag vertices to reposition',
+    bend: 'Drag the handle on any edge to curve it. Double-click to reset.',
+    delete: 'Click a vertex or edge to delete'
+  };
+  hintEl.textContent = hints[m] || '';
+}
+
+document.getElementById('btn-vertex').onclick = () => setMode('vertex');
+document.getElementById('btn-edge').onclick = () => setMode('edge');
+document.getElementById('btn-move').onclick = () => setMode('move');
+document.getElementById('btn-bend').onclick = () => setMode('bend');
+document.getElementById('btn-delete').onclick = () => setMode('delete');
+document.getElementById('btn-clear').onclick = () => {
+  vertices = []; edges = []; nextId = 1; edgeSrc = null; render();
+};
+document.getElementById('btn-export').onclick = doExport;
+document.getElementById('btn-export-img').onclick = doExportImage;
+document.getElementById('btn-copy').onclick = () => {
+  exportText.select();
+  navigator.clipboard.writeText(exportText.value).then(() => {
+    document.getElementById('btn-copy').textContent = 'Copied!';
+    setTimeout(() => document.getElementById('btn-copy').textContent = 'Copy', 1500);
+  });
+};
+document.getElementById('btn-close-export').onclick = () => exportBox.style.display = 'none';
+
+function doExport() {
+  const deg = {};
+  vertices.forEach(v => deg[v.id] = 0);
+  edges.forEach(e => { deg[e.u]++; deg[e.v]++; });
+  const vList = vertices.map(v => v.label).join(', ');
+  const eList = edges.map(e => {
+    const a = vertices.find(v => v.id === e.u);
+    const b = vertices.find(v => v.id === e.v);
+    return a && b ? `(${a.label}, ${b.label})` : '';
+  }).filter(Boolean).join('\n');
+  const seq = vertices.map(v => deg[v.id]).sort((a, b) => b - a);
+  const adj = vertices.map(v => {
+    const nbrs = [];
+    edges.forEach(e => {
+      if (e.u === v.id) { const w = vertices.find(x => x.id === e.v); if (w) nbrs.push(w.label); }
+      if (e.v === v.id) { const w = vertices.find(x => x.id === e.u); if (w) nbrs.push(w.label); }
+    });
+    return `${v.label}: ${nbrs.join(', ')}`;
+  }).join('\n');
+  exportText.value = `Vertices (${vertices.length}): ${vList}\n\nEdges (${edges.length}):\n${eList}\n\nDegree sequence: ${condensed(seq)}\n\nAdjacency list:\n${adj}`;
+  exportBox.style.display = 'block';
+}
+
+function doExportImage() {
+  if (!vertices.length) return;
+  const pad = 40;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const v of vertices) {
+    minX = Math.min(minX, v.x - R); minY = Math.min(minY, v.y - R);
+    maxX = Math.max(maxX, v.x + R); maxY = Math.max(maxY, v.y + R);
+  }
+  for (const e of edges) {
+    if (e.mx != null) {
+      const cp = getControlPoint(e);
+      if (cp) {
+        minX = Math.min(minX, cp.x); minY = Math.min(minY, cp.y);
+        maxX = Math.max(maxX, cp.x); maxY = Math.max(maxY, cp.y);
+      }
+      minX = Math.min(minX, e.mx); minY = Math.min(minY, e.my);
+      maxX = Math.max(maxX, e.mx); maxY = Math.max(maxY, e.my);
+    }
+  }
+  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+  const w = maxX - minX;
+  const h = maxY - minY;
+  const bgColor = '#fff';
+  const nodeF = '#d0e4f5';
+  const nodeS = '#4a90c4';
+  const nodeT = '#1a5a8a';
+  const edgeC = '#aaa';
+  const fgColor = '#999';
+  const degs = vertices.map(v => getDeg(v.id)).sort((a, b) => b - a);
+  const seqStr = 'Degree sequence: ' + condensed(degs) + '    |V|=' + vertices.length + '  |E|=' + edges.length;
+  const labelH = 28;
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h + labelH}" viewBox="${minX} ${minY - labelH} ${w} ${h + labelH}">`;
+  s += `<rect x="${minX}" y="${minY - labelH}" width="${w}" height="${h + labelH}" fill="${bgColor}"/>`;
+  s += `<text x="${minX + w / 2}" y="${minY - 8}" text-anchor="middle" font-family="SF Mono,Consolas,monospace" font-size="13" fill="${fgColor}">${seqStr}</text>`;
+  for (const e of edges) {
+    const a = vertices.find(v => v.id === e.u);
+    const b = vertices.find(v => v.id === e.v);
+    if (!a || !b) continue;
+    const cp = getControlPoint(e);
+    if (cp) {
+      s += `<path d="M${a.x},${a.y} Q${cp.x},${cp.y} ${b.x},${b.y}" fill="none" stroke="${edgeC}" stroke-width="2"/>`;
+    } else {
+      s += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${edgeC}" stroke-width="2"/>`;
+    }
+  }
+  for (const v of vertices) {
+    const d = getDeg(v.id);
+    s += `<circle cx="${v.x}" cy="${v.y}" r="${R}" fill="${nodeF}" stroke="${nodeS}" stroke-width="1.5"/>`;
+    s += `<text x="${v.x}" y="${v.y}" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,Consolas,monospace" font-size="10" font-weight="600" fill="${nodeT}">${d}</text>`;
+    s += `<text x="${v.x}" y="${v.y - R - 6}" text-anchor="middle" font-family="SF Mono,Consolas,monospace" font-size="10" fill="${fgColor}">${v.label}</text>`;
+  }
+  s += `</svg>`;
+  const scale = 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = w * scale;
+  canvas.height = (h + labelH) * scale;
+  const ctx = canvas.getContext('2d');
+  const img = new Image();
+  const blob = new Blob([s], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  img.onload = () => {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+    canvas.toBlob(pngBlob => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(pngBlob);
+      a.download = 'graph.png';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }, 'image/png');
+  };
+  img.src = url;
+}
+
+function condensed(seq) {
+  if (!seq.length) return '—';
+  const parts = [];
+  let i = 0;
+  while (i < seq.length) {
+    let j = i;
+    while (j < seq.length && seq[j] === seq[i]) j++;
+    const count = j - i;
+    parts.push(count > 1 ? `${seq[i]}^${count}` : `${seq[i]}`);
+    i = j;
+  }
+  return '(' + parts.join(', ') + ')';
+}
+
+function pt(e) {
+  const r = svg.getBoundingClientRect();
+  const ct = e.touches ? e.touches[0] : e;
+  return { x: ct.clientX - r.left, y: ct.clientY - r.top };
+}
+
+function hitV(p) {
+  return vertices.find(v => Math.hypot(v.x - p.x, v.y - p.y) < R + 4);
+}
+
+function getHandlePos(e) {
+  const a = vertices.find(v => v.id === e.u);
+  const b = vertices.find(v => v.id === e.v);
+  if (!a || !b) return null;
+  if (e.mx != null) return { x: e.mx, y: e.my };
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+function getControlPoint(e) {
+  const a = vertices.find(v => v.id === e.u);
+  const b = vertices.find(v => v.id === e.v);
+  if (!a || !b || e.mx == null) return null;
+  return {
+    x: 2 * e.mx - (a.x + b.x) / 2,
+    y: 2 * e.my - (a.y + b.y) / 2
+  };
+}
+
+function hitBendHandle(p) {
+  for (const e of edges) {
+    const m = getHandlePos(e);
+    if (m && Math.hypot(m.x - p.x, m.y - p.y) < 10) return e;
+  }
+  return null;
+}
+
+function pointToEdgeDist(p, e) {
+  const a = vertices.find(v => v.id === e.u);
+  const b = vertices.find(v => v.id === e.v);
+  if (!a || !b) return Infinity;
+  const cp = getControlPoint(e);
+  if (cp) {
+    for (let t = 0; t <= 1; t += 0.02) {
+      const x = (1-t)*(1-t)*a.x + 2*(1-t)*t*cp.x + t*t*b.x;
+      const y = (1-t)*(1-t)*a.y + 2*(1-t)*t*cp.y + t*t*b.y;
+      if (Math.hypot(p.x - x, p.y - y) < 8) return 0;
+    }
+    return Infinity;
+  }
+  const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
+  if (len < 1) return Infinity;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (len * len)));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+function hitE(p) {
+  for (const e of edges) {
+    if (pointToEdgeDist(p, e) < 8) return e;
+  }
+  return null;
+}
+
+function getDeg(vid) {
+  let d = 0;
+  edges.forEach(e => { if (e.u === vid || e.v === vid) d++; });
+  return d;
+}
+
+function render() {
+  const nodeFill = cv('--node-fill');
+  const nodeStroke = cv('--node-stroke');
+  const nodeText = cv('--node-text');
+  const nodeHover = cv('--node-hover');
+  const nodeSrc = cv('--node-src');
+  const nodeSrcStroke = cv('--node-src-stroke');
+  const edgeCol = cv('--edge');
+  const edgeHovCol = cv('--edge-hover');
+  const handleCol = cv('--handle');
+  const handleOff = cv('--handle-off');
+  const handleStroke = cv('--handle-stroke');
+
+  let html = '';
+  const showHandles = (mode === 'bend');
+
+  for (const e of edges) {
+    const a = vertices.find(v => v.id === e.u);
+    const b = vertices.find(v => v.id === e.v);
+    if (!a || !b) continue;
+    const isHov = (hoveredE === e);
+    const col = isHov ? edgeHovCol : edgeCol;
+    const cp = getControlPoint(e);
+    if (cp) {
+      html += `<path d="M${a.x},${a.y} Q${cp.x},${cp.y} ${b.x},${b.y}" fill="none" stroke="${col}" stroke-width="2"/>`;
+    } else {
+      html += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${col}" stroke-width="2"/>`;
+    }
+    if (showHandles) {
+      const h = getHandlePos(e);
+      if (h) {
+        html += `<circle cx="${h.x}" cy="${h.y}" r="5" fill="${e.mx != null ? handleCol : handleOff}" stroke="${handleStroke}" stroke-width="1" style="cursor:grab"/>`;
+      }
+    }
+  }
+
+  for (const v of vertices) {
+    const d = getDeg(v.id);
+    const isHov = (hoveredV === v);
+    const isSrc = (edgeSrc === v.id);
+    const fill = isSrc ? nodeSrc : (isHov ? nodeHover : nodeFill);
+    const stroke = isSrc ? nodeSrcStroke : (isHov ? edgeHovCol : nodeStroke);
+    html += `<circle cx="${v.x}" cy="${v.y}" r="${R}" fill="${fill}" stroke="${stroke}" stroke-width="${isSrc ? 2.5 : 1.5}"/>`;
+    html += `<text x="${v.x}" y="${v.y}" text-anchor="middle" dominant-baseline="central" font-size="10" font-weight="600" fill="${nodeText}" style="pointer-events:none;font-family:inherit">${d}</text>`;
+  }
+
+  svg.innerHTML = html;
+  updateInfo();
+}
+
+function updateInfo() {
+  if (!vertices.length) {
+    degSeqEl.textContent = '—';
+    statsEl.textContent = '';
+    return;
+  }
+  const degs = vertices.map(v => getDeg(v.id)).sort((a, b) => b - a);
+  degSeqEl.textContent = condensed(degs);
+  statsEl.textContent = `|V|=${vertices.length}  |E|=${edges.length}`;
+}
+
+function showTooltip(v, p) {
+  removeTooltip();
+  tooltip = document.createElement('div');
+  tooltip.className = 'tooltip';
+  tooltip.textContent = v.label;
+  tooltip.style.left = (p.x + 14) + 'px';
+  tooltip.style.top = (p.y - 8) + 'px';
+  document.getElementById('canvas-wrap').appendChild(tooltip);
+}
+
+function removeTooltip() {
+  if (tooltip) { tooltip.remove(); tooltip = null; }
+}
+
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => render());
+
+svg.addEventListener('pointerdown', e => {
+  const p = pt(e);
+  if (mode === 'vertex') {
+    const newLabel = 'v' + (vertices.length + 1);
+    vertices.push({ id: nextId++, x: p.x, y: p.y, label: newLabel });
+    render();
+  } else if (mode === 'edge') {
+    const h = hitV(p);
+    if (!h) return;
+    if (!edgeSrc) {
+      edgeSrc = h.id;
+      render();
+      hintEl.textContent = `Edge from ${h.label} — click another vertex`;
+    } else {
+      if (h.id !== edgeSrc && !edges.some(e => (e.u === edgeSrc && e.v === h.id) || (e.v === edgeSrc && e.u === h.id))) {
+        edges.push({ id: nextId++, u: edgeSrc, v: h.id, mx: null, my: null });
+      }
+      edgeSrc = null;
+      render();
+      hintEl.textContent = 'Click a vertex to start an edge';
+    }
+  } else if (mode === 'move') {
+    const h = hitV(p);
+    if (h) {
+      dragV = h;
+      dragOff = { x: h.x - p.x, y: h.y - p.y };
+      svg.style.cursor = 'grabbing';
+      svg.setPointerCapture(e.pointerId);
+    }
+  } else if (mode === 'bend') {
+    const h = hitBendHandle(p);
+    if (h) {
+      dragBend = h;
+      svg.setPointerCapture(e.pointerId);
+      svg.style.cursor = 'grabbing';
+    }
+  } else if (mode === 'delete') {
+    const hv = hitV(p);
+    if (hv) {
+      edges = edges.filter(e => e.u !== hv.id && e.v !== hv.id);
+      vertices = vertices.filter(v => v.id !== hv.id);
+      relabel();
+      render();
+      return;
+    }
+    const he = hitE(p);
+    if (he) {
+      edges = edges.filter(e => e.id !== he.id);
+      render();
+    }
+  }
+});
+
+svg.addEventListener('pointermove', e => {
+  const p = pt(e);
+  if (dragV) {
+    dragV.x = p.x + dragOff.x;
+    dragV.y = p.y + dragOff.y;
+    render();
+    return;
+  }
+  if (dragBend) {
+    dragBend.mx = p.x;
+    dragBend.my = p.y;
+    render();
+    return;
+  }
+  const oldHV = hoveredV;
+  const oldHE = hoveredE;
+  hoveredV = hitV(p);
+  hoveredE = (!hoveredV) ? hitE(p) : null;
+  if (hoveredV !== oldHV || hoveredE !== oldHE) render();
+  if (hoveredV) showTooltip(hoveredV, p);
+  else removeTooltip();
+});
+
+svg.addEventListener('pointerup', () => {
+  if (dragV) { dragV = null; svg.style.cursor = 'grab'; }
+  if (dragBend) { dragBend = null; svg.style.cursor = 'pointer'; }
+});
+
+svg.addEventListener('dblclick', e => {
+  if (mode === 'bend') {
+    const p = pt(e);
+    const h = hitBendHandle(p);
+    if (h && h.mx != null) {
+      h.mx = null;
+      h.my = null;
+      render();
+    }
+  }
+});
+
+document.addEventListener('keydown', e => {
+  if (exportBox.style.display === 'block') {
+    if (e.key === 'Escape') exportBox.style.display = 'none';
+    return;
+  }
+  if (e.key === '1') setMode('vertex');
+  if (e.key === '2') setMode('edge');
+  if (e.key === '3') setMode('move');
+  if (e.key === '4') setMode('bend');
+  if (e.key === '5') setMode('delete');
+  if (e.key === 'Escape') { edgeSrc = null; render(); }
+});
+
+render();
+</script>
+</body>
+</html>
